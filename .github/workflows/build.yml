@@ -44,22 +44,29 @@ jobs:
           sudo apt-get update -qq || true
           sudo apt-get install -y --no-install-recommends unzip wget curl git build-essential || true
 
-      - name: Configure Android SDK Environment & Licenses
+      - name: Configure Android SDK Permissions & Install Platform 28
         run: |
           ANDROID_PATH="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
           echo "ANDROID_HOME=${ANDROID_PATH}" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=${ANDROID_PATH}" >> $GITHUB_ENV
           echo "${ANDROID_PATH}/cmdline-tools/latest/bin:${ANDROID_PATH}/platform-tools:${ANDROID_PATH}/tools/bin" >> $GITHUB_PATH
 
-          mkdir -p "${ANDROID_PATH}/licenses"
+          sudo mkdir -p "${ANDROID_PATH}/licenses"
+          sudo chown -R $USER:$USER "${ANDROID_PATH}"
+
+          # Accept all licenses
           echo -e "\n24333f8a63b1d99d69028a643456ac5074b7142e\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b1d99d69028a643456ac5074b7142e" > "${ANDROID_PATH}/licenses/android-sdk-license"
           echo -e "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910" > "${ANDROID_PATH}/licenses/android-sdk-preview-license"
 
           SDKMANAGER="${ANDROID_PATH}/cmdline-tools/latest/bin/sdkmanager"
-          if [ -x "$SDKMANAGER" ]; then
-            yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-            "$SDKMANAGER" "platform-tools" "platforms;android-${COMPILE_SDK}" "build-tools;${BUILD_TOOLS}" > /dev/null 2>&1 || true
-          fi
+          echo "==> Installing Android Platform ${COMPILE_SDK} and Build-Tools ${BUILD_TOOLS} via sdkmanager..."
+          yes | "$SDKMANAGER" --sdk_root="${ANDROID_PATH}" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" --sdk_root="${ANDROID_PATH}" "platform-tools" "platforms;android-${COMPILE_SDK}" "build-tools;${BUILD_TOOLS}"
+
+          # Verify platform-28 exists
+          test -d "${ANDROID_PATH}/platforms/android-${COMPILE_SDK}"
+          test -d "${ANDROID_PATH}/build-tools/${BUILD_TOOLS}"
+          echo "==> Android SDK platform 28 and build-tools 28.0.3 verified successfully."
 
       - name: Setup Android NDK r20b
         run: |
@@ -72,8 +79,6 @@ jobs:
             wget -q https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux-x86_64.zip -O /tmp/ndk.zip
             unzip -q -o /tmp/ndk.zip -d "${{ runner.temp }}"
             rm -f /tmp/ndk.zip
-          else
-            echo "Found existing NDK compiler at ${COMPILER}"
           fi
 
           test -x "${COMPILER}"
@@ -99,7 +104,6 @@ jobs:
       - name: Configure local.properties for Gradle
         run: |
           echo "sdk.dir=${ANDROID_HOME}" > local.properties
-          echo "ndk.dir=${ANDROID_NDK_HOME}" >> local.properties
           cat local.properties
 
       - name: Assemble Debug APK
@@ -110,7 +114,7 @@ jobs:
         run: |
           APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
           test -f "$APK_PATH"
-          echo "APK successfully created at ${APK_PATH}"
+          echo "==> APK successfully created at ${APK_PATH}"
           unzip -l "$APK_PATH" | grep "lib/armeabi-v7a/libwg"
 
       - name: Upload Built APK Artifact

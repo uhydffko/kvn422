@@ -20,6 +20,8 @@ import settingsGradle from '../settings.gradle?raw';
 import rootBuildGradle from '../build.gradle?raw';
 import appBuildGradle from '../app/build.gradle?raw';
 import androidManifestXml from '../app/src/main/AndroidManifest.xml?raw';
+import stringsXml from '../app/src/main/res/values/strings.xml?raw';
+import stylesXml from '../app/src/main/res/values/styles.xml?raw';
 import mainActivityJava from '../app/src/main/java/com/awg/legacy/MainActivity.java?raw';
 import awgVpnServiceJava from '../app/src/main/java/com/awg/legacy/AwgVpnService.java?raw';
 import awgConfigJava from '../app/src/main/java/com/awg/legacy/AwgConfig.java?raw';
@@ -89,6 +91,20 @@ const REPO_FILES: RepoFile[] = [
     language: 'xml',
     description: 'Системная иконка @android:drawable/sym_def_app_icon и тема @android:style/Theme.Holo.',
     content: androidManifestXml,
+  },
+  {
+    path: 'app/src/main/res/values/strings.xml',
+    category: 'Gradle / Manifest',
+    language: 'xml',
+    description: 'Ресурс имени приложения для компилятора ресурсов AAPT2.',
+    content: stringsXml,
+  },
+  {
+    path: 'app/src/main/res/values/styles.xml',
+    category: 'Gradle / Manifest',
+    language: 'xml',
+    description: 'Стиль приложения, наследующий системную тему Theme.Holo.',
+    content: stylesXml,
   },
   {
     path: 'app/src/main/java/com/awg/legacy/MainActivity.java',
