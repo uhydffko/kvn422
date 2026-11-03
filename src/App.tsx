@@ -23,6 +23,7 @@ import androidManifestXml from '../app/src/main/AndroidManifest.xml?raw';
 import mainActivityJava from '../app/src/main/java/com/awg/legacy/MainActivity.java?raw';
 import awgVpnServiceJava from '../app/src/main/java/com/awg/legacy/AwgVpnService.java?raw';
 import awgConfigJava from '../app/src/main/java/com/awg/legacy/AwgConfig.java?raw';
+import gitattributesRaw from '../.gitattributes?raw';
 
 interface RepoFile {
   path: string;
@@ -39,6 +40,13 @@ const REPO_FILES: RepoFile[] = [
     language: 'yaml',
     description: 'Пайплайн GitHub Actions: JDK 8, Go 1.20, Android NDK r20b, Gradle 6.7.1, сборка и публикация app-debug.apk.',
     content: workflowYml,
+  },
+  {
+    path: '.gitattributes',
+    category: 'CI / Native',
+    language: 'plaintext',
+    description: 'Защита от Windows CRLF переводов строк (предотвращает ошибки exit code 127 в Linux-скриптах).',
+    content: gitattributesRaw,
   },
   {
     path: 'scripts/build-native.sh',

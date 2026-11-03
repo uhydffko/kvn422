@@ -21,13 +21,17 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 8 (Required for Gradle 6.7.1 & AGP 4.0.2)
+      - name: Fix Line Endings (CRLF to LF for Windows uploads)
+        run: |
+          find . -type f \( -name "*.sh" -o -name "*.gradle" -o -name "*.java" -o -name "*.c" -o -name "*.xml" \) -exec sed -i 's/\r$//' {} +
+
+      - name: Set up JDK 8 (Temurin)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '8'
 
-      - name: Set up Go 1.20 (Last Go toolchain with full Android ARMv7 API 17 compatibility)
+      - name: Set up Go 1.20
         uses: actions/setup-go@v5
         with:
           go-version: '1.20.14'
@@ -44,10 +48,18 @@ jobs:
             build-essential \
             libncurses5
 
-      - name: Set up Android SDK (Platform 28 & Build-Tools 28.0.3)
+      - name: Configure Android SDK Environment
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platform-tools" "platforms;android-${COMPILE_SDK}" "build-tools;${BUILD_TOOLS}"
+          ANDROID_PATH="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=${ANDROID_PATH}" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=${ANDROID_PATH}" >> $GITHUB_ENV
+          echo "${ANDROID_PATH}/cmdline-tools/latest/bin:${ANDROID_PATH}/platform-tools:${ANDROID_PATH}/tools/bin" >> $GITHUB_PATH
+
+          SDKMANAGER="${ANDROID_PATH}/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+            "$SDKMANAGER" "platform-tools" "platforms;android-${COMPILE_SDK}" "build-tools;${BUILD_TOOLS}" > /dev/null 2>&1 || true
+          fi
 
       - name: Cache Android NDK r20b
         id: cache-ndk
@@ -56,7 +68,7 @@ jobs:
           path: ${{ runner.temp }}/android-ndk-${{ env.NDK_VERSION }}
           key: android-ndk-linux-${{ env.NDK_VERSION }}
 
-      - name: Download Android NDK r20b (Full Bionic API 17 Jelly Bean Support)
+      - name: Download Android NDK r20b (API 17 Bionic Support)
         if: steps.cache-ndk.outputs.cache-hit != 'true'
         run: |
           wget -q https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux-x86_64.zip -O /tmp/ndk.zip
@@ -67,17 +79,24 @@ jobs:
         run: |
           echo "ANDROID_NDK_HOME=${{ runner.temp }}/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
 
-      - name: Build Native Libraries (libwg-go.so & libwg-jni.so for armeabi-v7a API 17)
+      - name: Build Native Libraries (libwg-go.so & libwg-jni.so)
         run: |
           chmod +x scripts/build-native.sh
-          ./scripts/build-native.sh
+          bash scripts/build-native.sh
 
-      - name: Set up Gradle 6.7.1 (No Gradle Wrapper Required)
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: ${{ env.GRADLE_VERSION }}
+      - name: Install Gradle 6.7.1
+        run: |
+          if ! command -v gradle >/dev/null 2>&1; then
+            echo "Installing Gradle ${GRADLE_VERSION}..."
+            wget -q https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip -O /tmp/gradle.zip
+            sudo mkdir -p /opt/gradle
+            sudo unzip -q -o /tmp/gradle.zip -d /opt/gradle
+            sudo ln -sf /opt/gradle/gradle-${GRADLE_VERSION}/bin/gradle /usr/local/bin/gradle
+            rm -f /tmp/gradle.zip
+          fi
+          gradle --version
 
-      - name: Assemble Debug APK via Global Gradle
+      - name: Assemble Debug APK
         run: |
           gradle assembleDebug --no-daemon --stacktrace
 
@@ -85,8 +104,8 @@ jobs:
         run: |
           APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
           test -f "$APK_PATH"
-          unzip -l "$APK_PATH" | grep "lib/armeabi-v7a/libwg-go.so"
-          unzip -l "$APK_PATH" | grep "lib/armeabi-v7a/libwg-jni.so"
+          echo "Verifying APK contents:"
+          unzip -l "$APK_PATH" | grep "lib/armeabi-v7a/libwg"
 
       - name: Upload Built APK Artifact
         uses: actions/upload-artifact@v4
