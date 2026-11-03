@@ -1,0 +1,6 @@
+{
+  "name": "AmneziaWG Legacy Android 4.2.2 (API 17) Cloud Build",
+  "description": "Zero-dependency Android 4.2.2 (API 17) AmneziaWG (1.5 / 2.0 / 3.0 / 3.1) VPN client repository with 100% autonomous GitHub Actions NDK r20b + Gradle 6.7.1 cloud build.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

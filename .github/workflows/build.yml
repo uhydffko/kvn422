@@ -1,0 +1,96 @@
+name: Build AmneziaWG Legacy APK (API 17)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-22.04
+    env:
+      ANDROID_API: "17"
+      COMPILE_SDK: "28"
+      BUILD_TOOLS: "28.0.3"
+      NDK_VERSION: "r20b"
+      GRADLE_VERSION: "6.7.1"
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 8 (Required for Gradle 6.7.1 & AGP 4.0.2)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '8'
+
+      - name: Set up Go 1.20 (Last Go toolchain with full Android ARMv7 API 17 compatibility)
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.20.14'
+          cache: false
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            unzip \
+            wget \
+            curl \
+            git \
+            build-essential \
+            libncurses5
+
+      - name: Set up Android SDK (Platform 28 & Build-Tools 28.0.3)
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platform-tools" "platforms;android-${COMPILE_SDK}" "build-tools;${BUILD_TOOLS}"
+
+      - name: Cache Android NDK r20b
+        id: cache-ndk
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/android-ndk-${{ env.NDK_VERSION }}
+          key: android-ndk-linux-${{ env.NDK_VERSION }}
+
+      - name: Download Android NDK r20b (Full Bionic API 17 Jelly Bean Support)
+        if: steps.cache-ndk.outputs.cache-hit != 'true'
+        run: |
+          wget -q https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux-x86_64.zip -O /tmp/ndk.zip
+          unzip -q /tmp/ndk.zip -d ${{ runner.temp }}
+          rm -f /tmp/ndk.zip
+
+      - name: Export ANDROID_NDK_HOME
+        run: |
+          echo "ANDROID_NDK_HOME=${{ runner.temp }}/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
+
+      - name: Build Native Libraries (libwg-go.so & libwg-jni.so for armeabi-v7a API 17)
+        run: |
+          chmod +x scripts/build-native.sh
+          ./scripts/build-native.sh
+
+      - name: Set up Gradle 6.7.1 (No Gradle Wrapper Required)
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Assemble Debug APK via Global Gradle
+        run: |
+          gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Verify Native Libraries Inside APK
+        run: |
+          APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK_PATH"
+          unzip -l "$APK_PATH" | grep "lib/armeabi-v7a/libwg-go.so"
+          unzip -l "$APK_PATH" | grep "lib/armeabi-v7a/libwg-jni.so"
+
+      - name: Upload Built APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AmneziaWG-Legacy-API17-Debug-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
