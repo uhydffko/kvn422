@@ -16,27 +16,38 @@ fi
 
 TOOLCHAIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"
 CC_BIN="${TOOLCHAIN}/bin/armv7a-linux-androideabi17-clang"
-AR_BIN="${TOOLCHAIN}/bin/arm-linux-androideabi-ar"
-STRIP_BIN="${TOOLCHAIN}/bin/arm-linux-androideabi-strip"
+
+# Select archiver and strip binaries available in NDK r20b LLVM toolchain
+if [ -x "${TOOLCHAIN}/bin/arm-linux-androideabi-ar" ]; then
+  AR_BIN="${TOOLCHAIN}/bin/arm-linux-androideabi-ar"
+elif [ -x "${TOOLCHAIN}/bin/llvm-ar" ]; then
+  AR_BIN="${TOOLCHAIN}/bin/llvm-ar"
+else
+  AR_BIN="ar"
+fi
+
+if [ -x "${TOOLCHAIN}/bin/arm-linux-androideabi-strip" ]; then
+  STRIP_BIN="${TOOLCHAIN}/bin/arm-linux-androideabi-strip"
+elif [ -x "${TOOLCHAIN}/bin/llvm-strip" ]; then
+  STRIP_BIN="${TOOLCHAIN}/bin/llvm-strip"
+else
+  STRIP_BIN="strip"
+fi
 
 if [ ! -x "${CC_BIN}" ]; then
   echo "ERROR: Clang compiler for API 17 not found at ${CC_BIN}"
   exit 1
 fi
 
+echo "==> Toolchain verified:"
+echo "    CC:    ${CC_BIN}"
+echo "    AR:    ${AR_BIN}"
+echo "    STRIP: ${STRIP_BIN}"
+
 echo "==> [1/4] Preparing AmneziaWG Go userspace engine for Android API 17 (armeabi-v7a)..."
 AWG_SRC_DIR="${BUILD_WORK_DIR}/amneziawg-android-go"
 mkdir -p "${AWG_SRC_DIR}"
 
-# Clone upstream amneziawg-go and adapt for Android VpnService TUN FD + UAPI exports
-if git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-go.git "${AWG_SRC_DIR}/upstream" 2>/dev/null; then
-  echo "==> Cloned upstream amneziawg-go repository."
-else
-  echo "==> Upstream clone unavailable or rate-limited; using embedded AmneziaWG userspace implementation."
-fi
-
-# Generate Android API 17 c-shared wrapper module supporting AmneziaWG 1.5 / 2.0 / 3.0 / 3.1
-# This wrapper avoids Linux ≥3.17 getrandom() traps and Bionic API ≥21 symbols (stderr, mmap64)
 cat > "${AWG_SRC_DIR}/go.mod" << 'EOF'
 module com.awg.legacy/awggo
 
@@ -239,14 +250,12 @@ func runTunnelLoop(h *TunnelHandle) {
 
 	peerSa := resolveUDPAddr(h.endpoint)
 	if peerSa != nil {
-		// Emit CPS I1..I5 mimicry packets if configured (AmneziaWG 3.0 / 3.1)
 		sendCpsSignatureIfPresent(h.sockV4, peerSa, h.obf.I1)
 		sendCpsSignatureIfPresent(h.sockV4, peerSa, h.obf.I2)
 		sendCpsSignatureIfPresent(h.sockV4, peerSa, h.obf.I3)
 		sendCpsSignatureIfPresent(h.sockV4, peerSa, h.obf.I4)
 		sendCpsSignatureIfPresent(h.sockV4, peerSa, h.obf.I5)
 
-		// Emit Jc junk packets sized between Jmin..Jmax
 		for i := 0; i < h.obf.Jc && i < 32; i++ {
 			jLen := h.obf.Jmin
 			if jLen <= 0 {
@@ -417,28 +426,31 @@ EOF
 
 echo "==> [2/4] Compiling libwg-go.so with CGO for Android API 17 (armv7a)..."
 pushd "${AWG_SRC_DIR}" >/dev/null
-CGO_ENABLED=1 \
-GOOS=android \
-GOARCH=arm \
-GOARM=7 \
-CC="${CC_BIN}" \
-AR="${AR_BIN}" \
-CGO_CFLAGS="-D__ANDROID_API__=17 -O2 -fPIC" \
-CGO_LDFLAGS="-llog -ldl -Wl,--hash-style=sysv" \
-go build -buildmode=c-shared -trimpath -ldflags="-s -w" -o "${OUT_DIR}/libwg-go.so" ./api_android.go
+export CGO_ENABLED=1
+export GOOS=android
+export GOARCH=arm
+export GOARM=7
+export CC="${CC_BIN}"
+export AR="${AR_BIN}"
+export CGO_CFLAGS_ALLOW=".*"
+export CGO_LDFLAGS_ALLOW=".*"
+export CGO_CFLAGS="-D__ANDROID_API__=17 -O2 -fPIC"
+export CGO_LDFLAGS="-llog -ldl"
+
+go build -buildmode=c-shared -trimpath -ldflags="-s -w" -o "${OUT_DIR}/libwg-go.so" .
 popd >/dev/null
 
 echo "==> [3/4] Compiling JNI bridge libwg-jni.so for Android API 17 (armv7a)..."
 "${CC_BIN}" \
   -D__ANDROID_API__=17 \
   -O2 -Wall -Wextra -fPIC -shared \
-  -Wl,--hash-style=sysv \
   -o "${OUT_DIR}/libwg-jni.so" \
   "${ROOT_DIR}/app/src/main/cpp/wg-jni.c" \
   -ldl -llog
 
 if [ -x "${STRIP_BIN}" ]; then
   "${STRIP_BIN}" --strip-unneeded "${OUT_DIR}/libwg-jni.so" || true
+  "${STRIP_BIN}" --strip-unneeded "${OUT_DIR}/libwg-go.so" || true
 fi
 
 echo "==> [4/4] Verifying Bionic API 17 symbol compatibility..."

@@ -16,12 +16,14 @@ jobs:
       BUILD_TOOLS: "28.0.3"
       NDK_VERSION: "r20b"
       GRADLE_VERSION: "6.7.1"
+      CGO_CFLAGS_ALLOW: ".*"
+      CGO_LDFLAGS_ALLOW: ".*"
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Fix Line Endings (CRLF to LF for Windows uploads)
+      - name: Sanitize Windows Line Endings (CRLF to LF)
         run: |
           find . -type f \( -name "*.sh" -o -name "*.gradle" -o -name "*.java" -o -name "*.c" -o -name "*.xml" \) -exec sed -i 's/\r$//' {} +
 
@@ -39,21 +41,19 @@ jobs:
 
       - name: Install System Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            unzip \
-            wget \
-            curl \
-            git \
-            build-essential \
-            libncurses5
+          sudo apt-get update -qq || true
+          sudo apt-get install -y --no-install-recommends unzip wget curl git build-essential || true
 
-      - name: Configure Android SDK Environment
+      - name: Configure Android SDK Environment & Licenses
         run: |
           ANDROID_PATH="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
           echo "ANDROID_HOME=${ANDROID_PATH}" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=${ANDROID_PATH}" >> $GITHUB_ENV
           echo "${ANDROID_PATH}/cmdline-tools/latest/bin:${ANDROID_PATH}/platform-tools:${ANDROID_PATH}/tools/bin" >> $GITHUB_PATH
+
+          mkdir -p "${ANDROID_PATH}/licenses"
+          echo -e "\n24333f8a63b1d99d69028a643456ac5074b7142e\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b1d99d69028a643456ac5074b7142e" > "${ANDROID_PATH}/licenses/android-sdk-license"
+          echo -e "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910" > "${ANDROID_PATH}/licenses/android-sdk-preview-license"
 
           SDKMANAGER="${ANDROID_PATH}/cmdline-tools/latest/bin/sdkmanager"
           if [ -x "$SDKMANAGER" ]; then
@@ -61,30 +61,30 @@ jobs:
             "$SDKMANAGER" "platform-tools" "platforms;android-${COMPILE_SDK}" "build-tools;${BUILD_TOOLS}" > /dev/null 2>&1 || true
           fi
 
-      - name: Cache Android NDK r20b
-        id: cache-ndk
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/android-ndk-${{ env.NDK_VERSION }}
-          key: android-ndk-linux-${{ env.NDK_VERSION }}
-
-      - name: Download Android NDK r20b (API 17 Bionic Support)
-        if: steps.cache-ndk.outputs.cache-hit != 'true'
+      - name: Setup Android NDK r20b
         run: |
-          wget -q https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux-x86_64.zip -O /tmp/ndk.zip
-          unzip -q /tmp/ndk.zip -d ${{ runner.temp }}
-          rm -f /tmp/ndk.zip
+          NDK_DEST="${{ runner.temp }}/android-ndk-${NDK_VERSION}"
+          COMPILER="${NDK_DEST}/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi17-clang"
 
-      - name: Export ANDROID_NDK_HOME
-        run: |
-          echo "ANDROID_NDK_HOME=${{ runner.temp }}/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
+          if [ ! -x "${COMPILER}" ]; then
+            echo "Downloading Android NDK ${NDK_VERSION}..."
+            rm -rf "${NDK_DEST}"
+            wget -q https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux-x86_64.zip -O /tmp/ndk.zip
+            unzip -q -o /tmp/ndk.zip -d "${{ runner.temp }}"
+            rm -f /tmp/ndk.zip
+          else
+            echo "Found existing NDK compiler at ${COMPILER}"
+          fi
+
+          test -x "${COMPILER}"
+          echo "ANDROID_NDK_HOME=${NDK_DEST}" >> $GITHUB_ENV
 
       - name: Build Native Libraries (libwg-go.so & libwg-jni.so)
         run: |
           chmod +x scripts/build-native.sh
-          bash scripts/build-native.sh
+          bash -x scripts/build-native.sh
 
-      - name: Install Gradle 6.7.1
+      - name: Setup Gradle 6.7.1
         run: |
           if ! command -v gradle >/dev/null 2>&1; then
             echo "Installing Gradle ${GRADLE_VERSION}..."
@@ -96,6 +96,12 @@ jobs:
           fi
           gradle --version
 
+      - name: Configure local.properties for Gradle
+        run: |
+          echo "sdk.dir=${ANDROID_HOME}" > local.properties
+          echo "ndk.dir=${ANDROID_NDK_HOME}" >> local.properties
+          cat local.properties
+
       - name: Assemble Debug APK
         run: |
           gradle assembleDebug --no-daemon --stacktrace
@@ -104,7 +110,7 @@ jobs:
         run: |
           APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
           test -f "$APK_PATH"
-          echo "Verifying APK contents:"
+          echo "APK successfully created at ${APK_PATH}"
           unzip -l "$APK_PATH" | grep "lib/armeabi-v7a/libwg"
 
       - name: Upload Built APK Artifact
